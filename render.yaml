@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: expense-email-ingestion
+    runtime: node
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: WEBHOOK_SHARED_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: DEFAULT_CURRENCY
+        value: USD
+      - key: MIN_CONFIDENCE
+        value: "0.7"
