@@ -66,7 +66,8 @@ function createHarness(options?: {
 
   const app = buildApp({
     config: {
-      webhookSharedSecret: "test-secret"
+      webhookSharedSecret: "test-secret",
+      revision: "test-revision"
     },
     expenseIngestService: service
   });
@@ -91,6 +92,22 @@ afterEach(async () => {
 });
 
 describe("POST /ingest/email-invoice", () => {
+  it("reports the running revision from the health endpoint", async () => {
+    const harness = createHarness();
+    appsToClose.push(harness.app);
+
+    const response = await harness.app.inject({
+      method: "GET",
+      url: "/health"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      status: "ok",
+      revision: "test-revision"
+    });
+  });
+
   it("returns a parsed expense for a valid PDF payload", async () => {
     const harness = createHarness();
     appsToClose.push(harness.app);

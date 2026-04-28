@@ -21,7 +21,7 @@ function secretsMatch(expected: string, actual: string | undefined): boolean {
 }
 
 export function buildApp(options: {
-  config: Pick<AppConfig, "webhookSharedSecret">;
+  config: Pick<AppConfig, "revision" | "webhookSharedSecret">;
   expenseIngestService: ExpenseIngestService;
 }) {
   const app = Fastify({
@@ -29,7 +29,8 @@ export function buildApp(options: {
   });
 
   app.get("/health", async () => ({
-    status: "ok"
+    status: "ok",
+    revision: options.config.revision
   }));
 
   app.post("/ingest/email-invoice", async (request, reply) => {

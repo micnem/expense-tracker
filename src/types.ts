@@ -9,6 +9,7 @@ export interface AppConfig {
   geminiModel: string;
   defaultCurrency: string;
   minConfidence: number;
+  revision: string;
 }
 
 export interface ParsedExpense extends ParsedExpenseDraft {
