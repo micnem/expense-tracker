@@ -16,8 +16,23 @@ const CURRENCY_ALIASES: Record<string, string> = {
   "₪": "ILS"
 };
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " "
+};
+
 export function normalizeWhitespace(value: string): string {
-  return value.replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]+/g, " ").trim();
+  return value
+    .replace(/\r/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
 }
 
 export function decodeBase64OrThrow(value: string): Buffer {
@@ -101,8 +116,79 @@ export function stringifyJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function decodeHtmlEntity(entity: string): string {
+  const normalized = entity.toLowerCase();
+
+  if (normalized.startsWith("#x")) {
+    const codePoint = Number.parseInt(normalized.slice(2), 16);
+    return Number.isNaN(codePoint) ? `&${entity};` : String.fromCodePoint(codePoint);
+  }
+
+  if (normalized.startsWith("#")) {
+    const codePoint = Number.parseInt(normalized.slice(1), 10);
+    return Number.isNaN(codePoint) ? `&${entity};` : String.fromCodePoint(codePoint);
+  }
+
+  return HTML_ENTITY_MAP[normalized] ?? `&${entity};`;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&(#x?[0-9a-f]+|[a-z][a-z0-9]+);/giu, (_match, entity: string) =>
+    decodeHtmlEntity(entity)
+  );
+}
+
+export function extractTextFromHtml(value: string): string {
+  if (!value.trim()) {
+    return "";
+  }
+
+  const text = value
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/giu, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
+    .replace(/<(br|hr)\b[^>]*\/?>/giu, "\n")
+    .replace(/<\/(article|aside|div|footer|h[1-6]|header|li|ol|p|section|table|tr|ul)>/giu, "\n")
+    .replace(/<(td|th)\b[^>]*>/giu, " ")
+    .replace(/<\/(td|th)>/giu, " ")
+    .replace(/<[^>]+>/g, " ");
+
+  return normalizeWhitespace(decodeHtmlEntities(text));
+}
+
 export function buildBodyText(payload: EmailInvoicePayload): string {
-  return normalizeWhitespace([payload.plainBody, payload.snippet].filter(Boolean).join("\n\n"));
+  const segments: string[] = [];
+
+  for (const rawSegment of [payload.plainBody, extractTextFromHtml(payload.htmlBody), payload.snippet]) {
+    const normalized = normalizeWhitespace(rawSegment);
+
+    if (!normalized) {
+      continue;
+    }
+
+    const existingIndex = segments.findIndex(
+      (segment) =>
+        segment === normalized || segment.includes(normalized) || normalized.includes(segment)
+    );
+
+    if (existingIndex === -1) {
+      segments.push(normalized);
+      continue;
+    }
+
+    const existingSegment = segments[existingIndex];
+
+    if (
+      existingSegment &&
+      normalized.length > existingSegment.length &&
+      normalized.includes(existingSegment)
+    ) {
+      segments[existingIndex] = normalized;
+    }
+  }
+
+  return segments.join("\n\n");
 }
 
 export function buildParseSummary(expense: ParsedExpense | null, reason?: string): string {

@@ -17,6 +17,7 @@ function createPayload(overrides: Partial<EmailInvoicePayload> = {}): EmailInvoi
     replyTo: "",
     date: "2026-03-31T08:15:00.000Z",
     plainBody: "Invoice total USD 42.50 for March 2026",
+    htmlBody: "",
     snippet: "Invoice total USD 42.50",
     attachments: [
       {
@@ -146,6 +147,56 @@ describe("POST /ingest/email-invoice", () => {
       parsedExpense: {
         source: "body",
         vendor: "Anthropic"
+      }
+    });
+    expect(harness.pdfTextExtractor.calls).toBe(0);
+  });
+
+  it("falls back to HTML-only email bodies when plain text is empty", async () => {
+    const harness = createHarness({
+      payload: createPayload({
+        attachments: [],
+        plainBody: "",
+        htmlBody: [
+          "<html><body>",
+          "<p><strong>Thank you for your payment!</strong></p>",
+          "<p>Professional team (monthly) subscription to Figma.</p>",
+          "<p><strong>Invoice ID:</strong> in_1TQlVRIvcqWR3dFDAjLk20g1<br>",
+          "<strong>Team:</strong> Mana Team<br>",
+          "<strong>Start:</strong> Apr 27, 2026<br>",
+          "<strong>Total:</strong> $80.00&nbsp;USD</p>",
+          "</body></html>"
+        ].join(""),
+        snippet: ""
+      }),
+      draft: createDraft({
+        invoiceDate: "2026-04-27",
+        vendor: "Figma",
+        amount: 80,
+        reference: "in_1TQlVRIvcqWR3dFDAjLk20g1",
+        description: "Professional team (monthly) subscription",
+        currency: "USD"
+      })
+    });
+    appsToClose.push(harness.app);
+
+    const response = await harness.app.inject({
+      method: "POST",
+      url: "/ingest/email-invoice",
+      headers: {
+        "x-expense-tracker-secret": "test-secret"
+      },
+      payload: harness.payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "parsed",
+      parsedExpense: {
+        source: "body",
+        vendor: "Figma",
+        amount: 80,
+        reference: "in_1TQlVRIvcqWR3dFDAjLk20g1"
       }
     });
     expect(harness.pdfTextExtractor.calls).toBe(0);

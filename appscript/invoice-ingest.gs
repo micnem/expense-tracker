@@ -85,6 +85,9 @@ function sendInvoiceEmailsToWebhook() {
       });
 
     const plainBody = message.getPlainBody() || '';
+    const htmlBody = message.getBody() || '';
+    const fallbackBodyText = htmlToText_(htmlBody);
+    const extractedBodyText = plainBody || fallbackBodyText;
     const payload = {
       threadId: thread.getId(),
       messageId: message.getId(),
@@ -95,8 +98,9 @@ function sendInvoiceEmailsToWebhook() {
       bcc: typeof message.getBcc === 'function' ? message.getBcc() : '',
       replyTo: message.getReplyTo(),
       date: message.getDate().toISOString(),
-      plainBody: truncate_(plainBody, MAX_BODY_LENGTH),
-      snippet: truncate_(plainBody, 500),
+      plainBody: truncate_(extractedBodyText, MAX_BODY_LENGTH),
+      htmlBody: truncate_(htmlBody, MAX_BODY_LENGTH),
+      snippet: truncate_(extractedBodyText, 500),
       attachments: attachmentPayload
     };
 
@@ -364,4 +368,61 @@ function truncate_(text, maxLen) {
   }
 
   return text.length > maxLen ? text.slice(0, maxLen) : text;
+}
+
+function htmlToText_(html) {
+  if (!html) {
+    return '';
+  }
+
+  const text = String(html)
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<(br|hr)\b[^>]*\/?>/gi, '\n')
+    .replace(/<\/(article|aside|div|footer|h[1-6]|header|li|ol|p|section|table|tr|ul)>/gi, '\n')
+    .replace(/<(td|th)\b[^>]*>/gi, ' ')
+    .replace(/<\/(td|th)>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ');
+
+  return normalizeText_(decodeHtmlEntities_(text));
+}
+
+function decodeHtmlEntities_(text) {
+  const entityMap = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: '\'',
+    nbsp: ' '
+  };
+
+  return String(text).replace(/&(#x?[0-9a-f]+|[a-z][a-z0-9]+);/gi, function(match, entity) {
+    const normalized = String(entity).toLowerCase();
+    let codePoint;
+
+    if (normalized.indexOf('#x') === 0) {
+      codePoint = parseInt(normalized.slice(2), 16);
+      return isNaN(codePoint) ? match : String.fromCharCode(codePoint);
+    }
+
+    if (normalized.indexOf('#') === 0) {
+      codePoint = parseInt(normalized.slice(1), 10);
+      return isNaN(codePoint) ? match : String.fromCharCode(codePoint);
+    }
+
+    return Object.prototype.hasOwnProperty.call(entityMap, normalized) ? entityMap[normalized] : match;
+  });
+}
+
+function normalizeText_(text) {
+  return String(text)
+    .replace(/\r/g, '\n')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 }

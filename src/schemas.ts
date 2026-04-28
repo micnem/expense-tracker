@@ -18,6 +18,7 @@ export const emailInvoicePayloadSchema = z.object({
   replyTo: z.string().default(""),
   date: z.string().datetime({ offset: true }),
   plainBody: z.string().default(""),
+  htmlBody: z.string().default(""),
   snippet: z.string().default(""),
   attachments: z.array(emailAttachmentSchema).default([])
 });

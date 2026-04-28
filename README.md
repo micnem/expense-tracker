@@ -34,6 +34,7 @@ Expected body shape:
   "replyTo": "",
   "date": "2026-03-31T08:15:00.000Z",
   "plainBody": "Hi, please find attached invoice...",
+  "htmlBody": "<html><body><p>Hi, please find attached invoice...</p></body></html>",
   "snippet": "Hi, please find attached invoice...",
   "attachments": [
     {
