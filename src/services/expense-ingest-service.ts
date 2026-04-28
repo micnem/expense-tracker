@@ -13,9 +13,11 @@ import {
   createMessageDedupeKey,
   createReferenceDedupeKey,
   decodeBase64OrThrow,
+  extractInvoiceSignals,
   extractSenderName,
   hasUsableText,
   isPdfAttachment,
+  normalizeReference,
   normalizeCurrency,
   normalizeWhitespace,
   toIsoDate
@@ -55,7 +57,15 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
     }
 
     const draft = await this.options.expenseExtractor.extract(selection.input);
-    const parsedExpense = this.normalizeParsedExpense(payload, draft, selection.input.source);
+    const fallbackSignals = extractInvoiceSignals(
+      [selection.input.primaryText, selection.input.bodyText, selection.input.snippet].filter(Boolean).join("\n\n")
+    );
+    const parsedExpense = this.normalizeParsedExpense(
+      payload,
+      draft,
+      selection.input.source,
+      fallbackSignals
+    );
     const reviewReason = this.getReviewReason(parsedExpense);
 
     if (reviewReason) {
@@ -73,17 +83,23 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
   private normalizeParsedExpense(
     payload: EmailInvoicePayload,
     draft: ParsedExpenseDraft,
-    source: ExpenseSource
+    source: ExpenseSource,
+    fallbackSignals: ReturnType<typeof extractInvoiceSignals>
   ): ParsedExpense {
     const descriptionFallback = normalizeWhitespace(payload.subject || payload.snippet);
+    const draftReference = draft.reference?.trim() || null;
+    const fallbackReference = fallbackSignals.reference?.trim() || null;
 
     return {
       invoiceDate: draft.invoiceDate ?? toIsoDate(payload.date),
       vendor: draft.vendor?.trim() || extractSenderName(payload.from) || null,
-      amount: draft.amount === null ? null : Math.round(draft.amount * 100) / 100,
-      reference: draft.reference?.trim() || null,
+      amount:
+        draft.amount === null
+          ? fallbackSignals.amount
+          : Math.round(draft.amount * 100) / 100,
+      reference: this.chooseReference(draftReference, fallbackReference),
       description: draft.description?.trim() || descriptionFallback || null,
-      currency: normalizeCurrency(draft.currency),
+      currency: normalizeCurrency(draft.currency ?? fallbackSignals.currency),
       confidence: draft.confidence,
       source
     };
@@ -186,5 +202,28 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
 
   private createDedupeKey(messageId: string, reference: string | null): string {
     return reference ? createReferenceDedupeKey(reference) : createMessageDedupeKey(messageId);
+  }
+
+  private chooseReference(draftReference: string | null, fallbackReference: string | null): string | null {
+    if (!fallbackReference) {
+      return draftReference;
+    }
+
+    if (!draftReference) {
+      return fallbackReference;
+    }
+
+    const normalizedDraft = normalizeReference(draftReference);
+    const normalizedFallback = normalizeReference(fallbackReference);
+
+    if (normalizedDraft === normalizedFallback) {
+      return fallbackReference;
+    }
+
+    if (normalizedFallback.startsWith(normalizedDraft) || normalizedDraft.startsWith(normalizedFallback)) {
+      return fallbackReference.length >= draftReference.length ? fallbackReference : draftReference;
+    }
+
+    return draftReference;
   }
 }

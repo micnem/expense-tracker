@@ -25,6 +25,24 @@ const HTML_ENTITY_MAP: Record<string, string> = {
   nbsp: " "
 };
 
+const LABELED_REFERENCE_PATTERNS = [
+  /\binvoice\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu,
+  /\breceipt\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu,
+  /\breference\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu
+] as const;
+
+const LABELED_TOTAL_PATTERNS = [
+  /\b(?:invoice\s+)?total\b[\s:=-]{0,10}(?:([A-Z]{3}|[$€£₪])\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?)(?:\s*([A-Z]{3}|[$€£₪]))?/iu,
+  /\bamount\s+due\b[\s:=-]{0,10}(?:([A-Z]{3}|[$€£₪])\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?)(?:\s*([A-Z]{3}|[$€£₪]))?/iu,
+  /\bcharged\b[\s:=-]{0,10}(?:([A-Z]{3}|[$€£₪])\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?)(?:\s*([A-Z]{3}|[$€£₪]))?/iu
+] as const;
+
+export interface ExtractedInvoiceSignals {
+  amount: number | null;
+  currency: string | null;
+  reference: string | null;
+}
+
 export function normalizeWhitespace(value: string): string {
   return value
     .replace(/\r/g, "\n")
@@ -155,6 +173,52 @@ export function extractTextFromHtml(value: string): string {
     .replace(/<[^>]+>/g, " ");
 
   return normalizeWhitespace(decodeHtmlEntities(text));
+}
+
+function parseAmount(value: string): number | null {
+  const parsed = Number.parseFloat(value.replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function cleanupReference(value: string): string {
+  return value.replace(/[),.;:]+$/g, "").trim();
+}
+
+export function extractInvoiceSignals(value: string): ExtractedInvoiceSignals {
+  const text = normalizeWhitespace(value);
+  let reference: string | null = null;
+  let amount: number | null = null;
+  let currency: string | null = null;
+
+  for (const pattern of LABELED_REFERENCE_PATTERNS) {
+    const match = text.match(pattern);
+
+    if (match?.[1]) {
+      reference = cleanupReference(match[1]);
+      break;
+    }
+  }
+
+  for (const pattern of LABELED_TOTAL_PATTERNS) {
+    const match = text.match(pattern);
+
+    if (!match?.[2]) {
+      continue;
+    }
+
+    amount = parseAmount(match[2]);
+    currency = normalizeCurrency(match[1] ?? match[3] ?? null);
+
+    if (amount !== null) {
+      break;
+    }
+  }
+
+  return {
+    amount,
+    currency,
+    reference
+  };
 }
 
 export function buildBodyText(payload: EmailInvoicePayload): string {

@@ -202,8 +202,66 @@ describe("POST /ingest/email-invoice", () => {
     expect(harness.pdfTextExtractor.calls).toBe(0);
   });
 
+  it("fills missing labeled invoice fields from the body text when the model is incomplete", async () => {
+    const harness = createHarness({
+      payload: createPayload({
+        attachments: [],
+        plainBody: "",
+        htmlBody: [
+          "<html><body>",
+          "<p>We have successfully processed payment for your recurring Professional team (monthly) subscription to Figma.</p>",
+          "<p><strong>Invoice ID:</strong> in_1TQlVRIvcqWR3dFDAjLk20g1<br>",
+          "<strong>Team:</strong> Mana Team<br>",
+          "<strong>Start:</strong> Apr 27, 2026<br>",
+          "<strong>End:</strong> May 27, 2026<br>",
+          "<strong>Total:</strong> $80.00 USD</p>",
+          "</body></html>"
+        ].join(""),
+        snippet: ""
+      }),
+      draft: createDraft({
+        invoiceDate: "2026-04-27",
+        vendor: "Figma",
+        amount: null,
+        reference: "in_1TQlVRIvcqWR3dFDAjLk20g",
+        description: "Professional team (monthly) subscription",
+        currency: null,
+        confidence: 0.7
+      })
+    });
+    appsToClose.push(harness.app);
+
+    const response = await harness.app.inject({
+      method: "POST",
+      url: "/ingest/email-invoice",
+      headers: {
+        "x-expense-tracker-secret": "test-secret"
+      },
+      payload: harness.payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "parsed",
+      dedupeKey: createReferenceDedupeKey("in_1TQlVRIvcqWR3dFDAjLk20g1"),
+      parsedExpense: {
+        source: "body",
+        vendor: "Figma",
+        amount: 80,
+        reference: "in_1TQlVRIvcqWR3dFDAjLk20g1",
+        currency: "USD"
+      }
+    });
+    expect(harness.pdfTextExtractor.calls).toBe(0);
+  });
+
   it("routes incomplete parses to review", async () => {
     const harness = createHarness({
+      payload: createPayload({
+        plainBody: "Invoice reference INV-123 for March 2026",
+        snippet: "Invoice reference INV-123"
+      }),
+      pdfText: "Invoice INV-123 for March 2026",
       draft: createDraft({
         amount: null
       })
