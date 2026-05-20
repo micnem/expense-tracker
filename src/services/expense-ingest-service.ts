@@ -87,17 +87,23 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
     fallbackSignals: ReturnType<typeof extractInvoiceSignals>
   ): ParsedExpense {
     const descriptionFallback = normalizeWhitespace(payload.subject || payload.snippet);
+    const vendor = draft.vendor?.trim() || extractSenderName(payload.from) || null;
     const draftReference = draft.reference?.trim() || null;
-    const fallbackReference = fallbackSignals.reference?.trim() || null;
 
     return {
       invoiceDate: draft.invoiceDate ?? toIsoDate(payload.date),
-      vendor: draft.vendor?.trim() || extractSenderName(payload.from) || null,
+      vendor,
       amount:
         draft.amount === null
           ? fallbackSignals.amount
           : Math.round(draft.amount * 100) / 100,
-      reference: this.chooseReference(draftReference, fallbackReference),
+      reference: this.chooseReference({
+        payload,
+        source,
+        vendor,
+        draftReference,
+        fallbackSignals
+      }),
       description: draft.description?.trim() || descriptionFallback || null,
       currency: normalizeCurrency(draft.currency ?? fallbackSignals.currency),
       confidence: draft.confidence,
@@ -204,12 +210,25 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
     return reference ? createReferenceDedupeKey(reference) : createMessageDedupeKey(messageId);
   }
 
-  private chooseReference(draftReference: string | null, fallbackReference: string | null): string | null {
+  private chooseReference(options: {
+    payload: EmailInvoicePayload;
+    source: ExpenseSource;
+    vendor: string | null;
+    draftReference: string | null;
+    fallbackSignals: ReturnType<typeof extractInvoiceSignals>;
+  }): string | null {
+    const { payload, source, vendor, draftReference, fallbackSignals } = options;
+    const fallbackReference = fallbackSignals.reference?.trim() || null;
+
     if (!fallbackReference) {
       return draftReference;
     }
 
     if (!draftReference) {
+      return fallbackReference;
+    }
+
+    if (this.shouldPreferGoogleCloudPaymentId(payload, source, vendor, fallbackSignals)) {
       return fallbackReference;
     }
 
@@ -225,5 +244,27 @@ export class ExpenseEmailIngestService implements ExpenseIngestService {
     }
 
     return draftReference;
+  }
+
+  private shouldPreferGoogleCloudPaymentId(
+    payload: EmailInvoicePayload,
+    source: ExpenseSource,
+    vendor: string | null,
+    fallbackSignals: ReturnType<typeof extractInvoiceSignals>
+  ): boolean {
+    if (source !== "body" || fallbackSignals.referenceKind !== "paymentId" || !fallbackSignals.reference) {
+      return false;
+    }
+
+    const normalizedVendor = vendor?.trim().toLowerCase() ?? "";
+    const googleHints = [payload.subject, payload.from, payload.plainBody, payload.snippet]
+      .join("\n")
+      .toLowerCase();
+
+    return (
+      normalizedVendor === "google" ||
+      googleHints.includes("google cloud") ||
+      googleHints.includes("payments-noreply@google.com")
+    );
   }
 }

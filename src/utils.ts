@@ -25,10 +25,29 @@ const HTML_ENTITY_MAP: Record<string, string> = {
   nbsp: " "
 };
 
-const LABELED_REFERENCE_PATTERNS = [
-  /\binvoice\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu,
-  /\breceipt\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu,
-  /\breference\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu
+type ReferenceSignalKind = "invoice" | "receipt" | "paymentId" | "reference";
+
+const LABELED_REFERENCE_PATTERNS: ReadonlyArray<{
+  kind: ReferenceSignalKind;
+  pattern: RegExp;
+}> = [
+  {
+    kind: "invoice",
+    pattern: /\binvoice\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu
+  },
+  {
+    kind: "receipt",
+    pattern: /\breceipt\s*(?:id|number|#)?\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu
+  },
+  {
+    kind: "paymentId",
+    pattern:
+      /\bpayment\s*(?:id|number)\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]*(?:[ \t]+[A-Z0-9._-]+)*)/iu
+  },
+  {
+    kind: "reference",
+    pattern: /\breference\b[\s:=-]{0,10}([A-Z0-9][A-Z0-9._-]{5,})/iu
+  }
 ] as const;
 
 const LABELED_TOTAL_PATTERNS = [
@@ -41,6 +60,7 @@ export interface ExtractedInvoiceSignals {
   amount: number | null;
   currency: string | null;
   reference: string | null;
+  referenceKind: ReferenceSignalKind | null;
 }
 
 export function normalizeWhitespace(value: string): string {
@@ -187,14 +207,16 @@ function cleanupReference(value: string): string {
 export function extractInvoiceSignals(value: string): ExtractedInvoiceSignals {
   const text = normalizeWhitespace(value);
   let reference: string | null = null;
+  let referenceKind: ReferenceSignalKind | null = null;
   let amount: number | null = null;
   let currency: string | null = null;
 
-  for (const pattern of LABELED_REFERENCE_PATTERNS) {
+  for (const { kind, pattern } of LABELED_REFERENCE_PATTERNS) {
     const match = text.match(pattern);
 
     if (match?.[1]) {
       reference = cleanupReference(match[1]);
+      referenceKind = kind;
       break;
     }
   }
@@ -217,7 +239,8 @@ export function extractInvoiceSignals(value: string): ExtractedInvoiceSignals {
   return {
     amount,
     currency,
-    reference
+    reference,
+    referenceKind
   };
 }
 

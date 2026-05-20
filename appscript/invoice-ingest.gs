@@ -3,7 +3,8 @@ const WEBHOOK_SECRET = 'replace-me';
 const SPREADSHEET_ID = 'replace-me';
 const INVOICE_LABEL_NAME = 'Invoices';
 const PROCESSED_LABEL_NAME = 'Invoices/Processed';
-const MAX_BODY_LENGTH = 20000;
+const MAX_TEXT_BODY_LENGTH = 20000;
+const MAX_HTML_BODY_LENGTH = 100000;
 const EXPENSES_SHEET_NAME = 'Expenses';
 const REVIEW_SHEET_NAME = 'Review';
 const INGEST_LOG_SHEET_NAME = 'IngestLog';
@@ -87,7 +88,7 @@ function sendInvoiceEmailsToWebhook() {
     const plainBody = message.getPlainBody() || '';
     const htmlBody = message.getBody() || '';
     const fallbackBodyText = htmlToText_(htmlBody);
-    const extractedBodyText = plainBody || fallbackBodyText;
+    const extractedBodyText = plainBody.trim() ? plainBody : fallbackBodyText;
     const payload = {
       threadId: thread.getId(),
       messageId: message.getId(),
@@ -98,8 +99,8 @@ function sendInvoiceEmailsToWebhook() {
       bcc: typeof message.getBcc === 'function' ? message.getBcc() : '',
       replyTo: message.getReplyTo(),
       date: message.getDate().toISOString(),
-      plainBody: truncate_(extractedBodyText, MAX_BODY_LENGTH),
-      htmlBody: truncate_(htmlBody, MAX_BODY_LENGTH),
+      plainBody: truncate_(extractedBodyText, MAX_TEXT_BODY_LENGTH),
+      htmlBody: truncate_(htmlBody, MAX_HTML_BODY_LENGTH),
       snippet: truncate_(extractedBodyText, 500),
       attachments: attachmentPayload
     };
@@ -150,7 +151,13 @@ function processWebhookResult_(payload, result, sheets, indexes) {
         })
       });
       indexes.logByMessageId[payload.messageId] = sheets.ingestLog.getLastRow();
-      indexes.logByDedupeKey[duplicate.duplicateKey] = sheets.ingestLog.getLastRow();
+      const duplicateExpenseSignature = createExpenseSignature_(
+        result.parsedExpense.reference,
+        result.parsedExpense.amount
+      );
+      if (duplicateExpenseSignature) {
+        indexes.logByExpenseSignature[duplicateExpenseSignature] = sheets.ingestLog.getLastRow();
+      }
       return;
     }
 
@@ -168,10 +175,13 @@ function processWebhookResult_(payload, result, sheets, indexes) {
     });
 
     indexes.logByMessageId[payload.messageId] = sheets.ingestLog.getLastRow();
-    indexes.logByDedupeKey[result.dedupeKey] = sheets.ingestLog.getLastRow();
-
-    if (result.parsedExpense.reference) {
-      indexes.expenseRowByReference[normalizeReference_(result.parsedExpense.reference)] = expenseRowNumber;
+    const expenseSignature = createExpenseSignature_(
+      result.parsedExpense.reference,
+      result.parsedExpense.amount
+    );
+    if (expenseSignature) {
+      indexes.logByExpenseSignature[expenseSignature] = sheets.ingestLog.getLastRow();
+      indexes.expenseRowByExpenseSignature[expenseSignature] = expenseRowNumber;
     }
 
     return;
@@ -193,7 +203,6 @@ function processWebhookResult_(payload, result, sheets, indexes) {
     });
 
     indexes.logByMessageId[payload.messageId] = sheets.ingestLog.getLastRow();
-    indexes.logByDedupeKey[result.dedupeKey] = sheets.ingestLog.getLastRow();
     return;
   }
 
@@ -233,35 +242,38 @@ function ensureSheetWithHeaders_(spreadsheet, sheetName, headers) {
 function buildIndexes_(sheets) {
   const logValues = getDataRows_(sheets.ingestLog, 7);
   const expenseValues = getDataRows_(sheets.expenses, 6);
-  const logByDedupeKey = {};
+  const logByExpenseSignature = {};
   const logByMessageId = {};
-  const expenseRowByReference = {};
+  const expenseRowByExpenseSignature = {};
 
   logValues.forEach(function(row, index) {
     const rowNumber = index + 2;
     const messageId = row[1];
-    const dedupeKey = row[3];
 
     if (messageId) {
       logByMessageId[messageId] = rowNumber;
     }
 
-    if (dedupeKey) {
-      logByDedupeKey[dedupeKey] = rowNumber;
+    const parsedExpense = parseParsedExpenseFromSummary_(row[6]);
+    const expenseSignature = parsedExpense
+      ? createExpenseSignature_(parsedExpense.reference, parsedExpense.amount)
+      : null;
+    if (expenseSignature) {
+      logByExpenseSignature[expenseSignature] = rowNumber;
     }
   });
 
   expenseValues.forEach(function(row, index) {
-    const reference = row[3];
-    if (reference) {
-      expenseRowByReference[normalizeReference_(reference)] = index + 2;
+    const expenseSignature = createExpenseSignature_(row[3], row[2]);
+    if (expenseSignature) {
+      expenseRowByExpenseSignature[expenseSignature] = index + 2;
     }
   });
 
   return {
-    logByDedupeKey: logByDedupeKey,
+    logByExpenseSignature: logByExpenseSignature,
     logByMessageId: logByMessageId,
-    expenseRowByReference: expenseRowByReference
+    expenseRowByExpenseSignature: expenseRowByExpenseSignature
   };
 }
 
@@ -275,10 +287,15 @@ function getDataRows_(sheet, width) {
 }
 
 function findDuplicate_(payload, result, indexes) {
-  if (indexes.logByDedupeKey[result.dedupeKey]) {
+  const expenseSignature = createExpenseSignature_(
+    result.parsedExpense.reference,
+    result.parsedExpense.amount
+  );
+
+  if (expenseSignature && indexes.logByExpenseSignature[expenseSignature]) {
     return {
       duplicateKey: result.dedupeKey,
-      existingLogRow: indexes.logByDedupeKey[result.dedupeKey],
+      existingLogRow: indexes.logByExpenseSignature[expenseSignature],
       expenseRowNumber: ''
     };
   }
@@ -291,16 +308,12 @@ function findDuplicate_(payload, result, indexes) {
     };
   }
 
-  const reference = result.parsedExpense.reference;
-  if (reference) {
-    const normalizedReference = normalizeReference_(reference);
-    if (indexes.expenseRowByReference[normalizedReference]) {
-      return {
-        duplicateKey: result.dedupeKey,
-        existingLogRow: '',
-        expenseRowNumber: indexes.expenseRowByReference[normalizedReference]
-      };
-    }
+  if (expenseSignature && indexes.expenseRowByExpenseSignature[expenseSignature]) {
+    return {
+      duplicateKey: result.dedupeKey,
+      existingLogRow: '',
+      expenseRowNumber: indexes.expenseRowByExpenseSignature[expenseSignature]
+    };
   }
 
   return null;
@@ -360,6 +373,45 @@ function markProcessed_(thread, sourceLabel, processedLabel) {
 
 function normalizeReference_(reference) {
   return String(reference).trim().replace(/\s+/g, '').toUpperCase();
+}
+
+function normalizeAmount_(value) {
+  if (value === '' || value === null || typeof value === 'undefined') {
+    return null;
+  }
+
+  const amount = Number(value);
+  if (isNaN(amount) || !isFinite(amount)) {
+    return null;
+  }
+
+  return (Math.round(amount * 100) / 100).toFixed(2);
+}
+
+function createExpenseSignature_(reference, amount) {
+  if (!reference) {
+    return null;
+  }
+
+  const normalizedAmount = normalizeAmount_(amount);
+  if (normalizedAmount === null) {
+    return null;
+  }
+
+  return normalizeReference_(reference) + '|' + normalizedAmount;
+}
+
+function parseParsedExpenseFromSummary_(summary) {
+  if (!summary) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(summary);
+    return parsed && parsed.parsedExpense ? parsed.parsedExpense : null;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function truncate_(text, maxLen) {

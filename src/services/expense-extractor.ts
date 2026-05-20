@@ -93,6 +93,7 @@ function buildPrompt(input: ExtractionInput): string {
     "- invoiceDate must be the invoice issue date in YYYY-MM-DD, not a service period boundary.",
     "- amount must be the invoice total as a plain number with no currency symbol.",
     "- reference must be the invoice number, receipt number, or billing reference.",
+    "- For Google Cloud payment receipt emails, prefer the labeled Payment ID over the Payments profile ID.",
     "- description should be a short human-readable summary of the billed product or service.",
     "- currency must be an ISO 4217 code like USD, EUR, GBP, or ILS when possible.",
     "- confidence must be between 0 and 1 and should drop when fields are inferred.",

@@ -77,7 +77,7 @@ That script:
 
 - calls the webhook
 - bootstraps `Expenses`, `Review`, and `IngestLog`
-- dedupes by reference, then message id, then existing expense ref
+- dedupes by message id and by matching reference-plus-amount signatures
 - writes columns `A:E` in `Expenses`, leaving `Total` formula-owned
 - marks Gmail threads as processed after `parsed`, `duplicate`, or `review`
 

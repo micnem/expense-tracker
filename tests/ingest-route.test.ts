@@ -272,6 +272,57 @@ describe("POST /ingest/email-invoice", () => {
     expect(harness.pdfTextExtractor.calls).toBe(0);
   });
 
+  it("prefers the Google Cloud payment id for body-only payment receipts", async () => {
+    const harness = createHarness({
+      payload: createPayload({
+        attachments: [],
+        subject: "Google: We've received your payment for 1905-7112-8812",
+        from: "Google Payments <payments-noreply@google.com>",
+        date: "2026-05-19T23:00:00.000Z",
+        plainBody: [
+          "Payment received",
+          "Your payment amount of $100.00 to Google was received on May 19, 2026.",
+          "Payment for: Google Cloud",
+          "Payment ID: CLOUD X4FTTx",
+          "Payments profile ID: 1905-7112-8812"
+        ].join("\n"),
+        snippet: "Payment ID: CLOUD X4FTTx"
+      }),
+      draft: createDraft({
+        invoiceDate: "2026-05-19",
+        vendor: "Google",
+        amount: 100,
+        reference: "1905-7112-8812",
+        description: "Google Cloud",
+        currency: "USD",
+        confidence: 0.93
+      })
+    });
+    appsToClose.push(harness.app);
+
+    const response = await harness.app.inject({
+      method: "POST",
+      url: "/ingest/email-invoice",
+      headers: {
+        "x-expense-tracker-secret": "test-secret"
+      },
+      payload: harness.payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "parsed",
+      dedupeKey: createReferenceDedupeKey("CLOUD X4FTTx"),
+      parsedExpense: {
+        source: "body",
+        vendor: "Google",
+        amount: 100,
+        reference: "CLOUD X4FTTx"
+      }
+    });
+    expect(harness.pdfTextExtractor.calls).toBe(0);
+  });
+
   it("routes incomplete parses to review", async () => {
     const harness = createHarness({
       payload: createPayload({
